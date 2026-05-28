@@ -1,0 +1,6 @@
+{
+  "name": "BodyTrack AI",
+  "description": "Aplicativo premium de inteligência artificial para análise de física e postura corporal, rastreamento de evolução física com IA e visão computacional.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
