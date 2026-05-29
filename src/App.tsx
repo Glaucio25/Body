@@ -59,11 +59,32 @@ export default function App() {
 
     if (storedProfile) {
       const parsed = JSON.parse(storedProfile);
-      parsed.isPremium = true; // Auto-activate premium for all users
       setProfile(parsed);
-      localStorage.setItem('bt_profile', JSON.stringify(parsed));
+    } else {
+      // PRE-INITIALIZE WITH A COMPREHENSIVE FREE TEST PROFILE INSTEAD OF EMPTY!
+      const initialFreeProfile: UserProfile = {
+        name: "Glaucio Veroneze (Perfil de Teste - Grátis)",
+        age: 28,
+        height: 175,
+        weight: 78,
+        gender: "M",
+        goal: "definicao",
+        isPremium: false, // Starts locked/free demo!
+        registeredAt: new Date().toISOString()
+      };
+      setProfile(initialFreeProfile);
+      localStorage.setItem('bt_profile', JSON.stringify(initialFreeProfile));
+      
+      const initialAssessments = [DEFAULT_HISTORY_DEMO[0]]; // Exactly 1 assessment for free version
+      setAssessments(initialAssessments);
+      localStorage.setItem('bt_assessments', JSON.stringify(initialAssessments));
+      
+      setFocusedAssessmentId(DEFAULT_HISTORY_DEMO[0].id);
+      setSelectedLeftId(DEFAULT_HISTORY_DEMO[0].id);
+      setSelectedRightId(DEFAULT_HISTORY_DEMO[0].id);
     }
-    if (storedAssessments) {
+
+    if (storedProfile && storedAssessments) {
       const parsed = JSON.parse(storedAssessments) as PhysicalAssessment[];
       setAssessments(parsed);
       if (parsed.length > 0) {
@@ -97,12 +118,14 @@ export default function App() {
 
   // Handle new login profile registration completing onboarding wizard
   const handleOnboardingComplete = (newProfile: UserProfile) => {
-    // Keep isPremium true to unlock all PRO features
-    const demoAdjustedProfile = { ...newProfile, isPremium: true };
+    // New users start as false unless they specify demo
+    const demoAdjustedProfile = { ...newProfile, isPremium: false };
     saveProfile(demoAdjustedProfile);
 
     // If profile has demo name, load the full pre-populated history template so they have rich statistics immediately!
-    if (demoAdjustedProfile.name.includes("Demo") || demoAdjustedProfile.name.trim() === "Atleta Demo") {
+    if (demoAdjustedProfile.name.toLowerCase().includes("demo") || demoAdjustedProfile.name.trim() === "Atleta Demo") {
+      const premiumDemo = { ...demoAdjustedProfile, isPremium: true };
+      saveProfile(premiumDemo);
       saveAssessments(DEFAULT_HISTORY_DEMO);
       setFocusedAssessmentId(DEFAULT_HISTORY_DEMO[DEFAULT_HISTORY_DEMO.length - 1].id);
       setSelectedLeftId(DEFAULT_HISTORY_DEMO[0].id);
@@ -712,26 +735,85 @@ export default function App() {
                 )}
 
                 {/* Photo Capturing section */}
-                <PhotoCapture onCaptureComplete={handlePhotosCaptured} />
+                {!profile?.isPremium && assessments.length >= 1 ? (
+                  <div className="p-8 bg-slate-950 border border-slate-900 rounded-2xl text-center space-y-4 max-w-lg mx-auto relative overflow-hidden shadow-xl">
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-red-500/5 blur-2xl rounded-full" />
+                    <div className="w-12 h-12 bg-red-950/20 text-red-500 rounded-full flex items-center justify-center mx-auto border border-red-900/30">
+                      <Lock className="w-5 h-5" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <h4 className="text-base font-display font-black text-slate-200 uppercase tracking-wide">
+                        Limite de Escaneamento Atingido 🔒
+                      </h4>
+                      <p className="text-xs text-slate-400 leading-relaxed font-sans">
+                        Você já possui <strong>1 avaliação física cadastrada</strong> no plano gratuito de teste. O limite do plano de demonstração é de exatamente 1 escaneamento.
+                      </p>
+                    </div>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Ative a versão <strong>BodyTrack PRO</strong> com seu código de compra para registrar múltiplos exames de imagem e ver suas evoluções no gráfico postural!
+                    </p>
+                    <button
+                      onClick={() => setActiveTab('premium')}
+                      className="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:opacity-95 text-xs text-white uppercase font-bold tracking-wider rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 mx-auto shadow-md shadow-blue-900/10"
+                    >
+                      <span>Ativar Versão PRO</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <PhotoCapture onCaptureComplete={handlePhotosCaptured} />
+                )}
               </div>
             )}
-
+ 
             {activeTab === 'compare' && (
               <div className="space-y-6">
-                <ComparisonSlider
-                  assessments={assessments}
-                  selectedLeftId={selectedLeftId}
-                  selectedRightId={selectedRightId}
-                  onSetLeftId={setSelectedLeftId}
-                  onSetRightId={setSelectedRightId}
-                />
+                {!profile?.isPremium && assessments.length <= 1 ? (
+                  <div className="p-8 bg-slate-950 border border-slate-900 rounded-2xl text-center space-y-4 max-w-lg mx-auto relative overflow-hidden shadow-xl">
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-cyan-500/5 blur-2xl rounded-full" />
+                    <div className="w-12 h-12 bg-indigo-950/20 text-indigo-400 rounded-full flex items-center justify-center mx-auto border border-indigo-900/30">
+                      <Scale className="w-5 h-5" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <h4 className="text-base font-display font-black text-slate-200 uppercase tracking-wide">
+                        Comparador Postural Indisponível 🔒
+                      </h4>
+                      <p className="text-xs text-slate-400 leading-relaxed font-sans">
+                        A comparação de fotos lado-a-lado com marcação de desvios e eixos exige a gravação de pelo menos **duas avaliações físicas**.
+                      </p>
+                    </div>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Utilize seu código comercial ou código de teste no menu **Previsões Pro AI** para liberar novos exames e simetria lateral.
+                    </p>
+                    <button
+                      onClick={() => setActiveTab('premium')}
+                      className="px-5 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:opacity-95 text-xs text-white uppercase font-bold tracking-wider rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 mx-auto shadow-md shadow-blue-900/10"
+                    >
+                      <span>Desbloquear Comparador</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <ComparisonSlider
+                    assessments={assessments}
+                    selectedLeftId={selectedLeftId}
+                    selectedRightId={selectedRightId}
+                    onSetLeftId={setSelectedLeftId}
+                    onSetRightId={setSelectedRightId}
+                  />
+                )}
               </div>
             )}
-
+ 
             {activeTab === 'export' && (
               <div>
                 {focusedAssess ? (
-                  <PdfExporter assessment={focusedAssess} />
+                  <PdfExporter
+                    assessment={focusedAssess}
+                    profile={profile || undefined}
+                    assessments={assessments}
+                    isPremium={profile?.isPremium || false}
+                  />
                 ) : (
                   <div className="border border-dashed border-slate-800 p-8 rounded-2xl text-center text-slate-500 text-xs">
                     Nenhuma avaliação física carregada para gerar o PDF. Registre novas fotos primeiro!
@@ -739,11 +821,16 @@ export default function App() {
                 )}
               </div>
             )}
-
+ 
             {activeTab === 'premium' && (
               <PremiumGate
-                isPremium={profile.isPremium || false}
+                isPremium={profile?.isPremium || false}
                 onUnlockPremium={handleUnlockPremium}
+                onPremiumActivated={(updatedProfile) => {
+                  saveProfile(updatedProfile);
+                }}
+                profile={profile || undefined}
+                assessments={assessments}
               />
             )}
           </div>

@@ -451,6 +451,441 @@ Esquema JSON esperado:
     });
   });
 
+  // Unique activation codes database for single-use validations
+  interface ActivationCode {
+    code: string;
+    isUsed: boolean;
+    usedBy?: string;
+    usedAt?: string;
+  }
+
+  // Pre-populate with premium codes in the XXXXX-XXXXX-XXXXX-XXXXX format for instant use and testing
+  const activationCodes: ActivationCode[] = [
+    { code: "BTRAC-88B92-KP90A-33X74", isUsed: false },
+    { code: "BODY9-V39KL-82A7D-016BP", isUsed: false },
+    { code: "TRACK-P92BA-X278N-09H82", isUsed: false },
+    { code: "PREM4-H8K3A-VNV94-L982O", isUsed: false },
+    { code: "LIMIT-9961A-XXOP9-Z82B1", isUsed: false }
+  ];
+
+  // Helper generator to construct clean five-by-four randomized tokens
+  function generateRandomCode(): string {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    const getSeg = () => {
+      let part = "";
+      for (let i = 0; i < 5; i++) {
+        part += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      return part;
+    };
+    return `${getSeg()}-${getSeg()}-${getSeg()}-${getSeg()}`;
+  }
+
+  // API to list all activation codes
+  app.get("/api/codes", (req, res) => {
+    res.json({ success: true, codes: activationCodes });
+  });
+
+  // API to generate a new unique activation code
+  app.post("/api/codes/generate", (req, res) => {
+    let newCode = generateRandomCode();
+    // Ensure uniqueness
+    while (activationCodes.some(c => c.code === newCode)) {
+      newCode = generateRandomCode();
+    }
+    const newRecord = { code: newCode, isUsed: false };
+    activationCodes.push(newRecord);
+    res.json({ success: true, code: newCode, codes: activationCodes });
+  });
+
+  // API to check and consume an activation code
+  app.post("/api/codes/activate", (req, res) => {
+    const { code, name } = req.body;
+    if (!code) {
+      return res.status(400).json({ success: false, error: "Código de ativação não informado." });
+    }
+
+    const cleanCode = code.trim().toUpperCase();
+    const found = activationCodes.find(c => c.code === cleanCode);
+
+    if (!found) {
+      return res.status(400).json({ success: false, error: "Código de ativação inválido. Digite um código válido de uso único." });
+    }
+
+    if (found.isUsed) {
+      return res.status(400).json({ success: false, error: `Este código de ativação já foi utilizado por ${found.usedBy || 'outro usuário'} em ${found.usedAt ? new Date(found.usedAt).toLocaleDateString() : 'data desconhecida'}. Códigos de ativação são de uso único!` });
+    }
+
+    // Mark as used
+    found.isUsed = true;
+    found.usedBy = name || "Atleta Anônimo";
+    found.usedAt = new Date().toISOString();
+
+    res.json({
+      success: true,
+      message: "Ativação PRO concluída com sucesso!",
+      code: found,
+      codes: activationCodes
+    });
+  });
+
+  // API 5: Predict future progress based on goal and historical assessments
+  app.post("/api/predict-progress", async (req, res) => {
+    const { profile, assessments = [] } = req.body;
+
+    if (!profile) {
+      return res.status(400).json({ success: false, error: "Perfil de usuário não fornecido." });
+    }
+
+    const { name, age, height, weight, gender, goal } = profile;
+    console.log(`Predicting future progress for ${name}, goal: ${goal}, records count: ${assessments.length}`);
+
+    // Determine current/starting assessments metrics
+    let currentWeight = weight;
+    let currentBF = gender === "M" ? 18 : 24;
+    let currentScore = 70;
+    let currentPosture = "desvios_leves";
+    let currentSymmetry = "necessita_equilibrio";
+
+    if (assessments.length > 0) {
+      const latest = assessments[assessments.length - 1];
+      currentWeight = latest.weight || weight;
+      currentBF = latest.metrics?.bodyFat || currentBF;
+      currentScore = latest.metrics?.score || currentScore;
+      currentPosture = latest.metrics?.postureRating || currentPosture;
+      currentSymmetry = latest.metrics?.symmetryRating || currentSymmetry;
+    }
+
+    // Attempt to calculate historical slope (velocity of improvement)
+    let weightSpeedPerMonth = 0; // positive for gain, negative for loss
+    let bfSpeedPerMonth = 0;
+    let scoreSpeedPerMonth = 0;
+
+    if (assessments.length >= 2) {
+      const first = assessments[0];
+      const last = assessments[assessments.length - 1];
+      const timeDiff = new Date(last.date).getTime() - new Date(first.date).getTime();
+      const days = timeDiff / (1000 * 60 * 60 * 24);
+      if (days > 3) {
+        const weightDelta = last.weight - first.weight;
+        const bfDelta = (last.metrics?.bodyFat || 0) - (first.metrics?.bodyFat || 0);
+        const scoreDelta = (last.metrics?.score || 0) - (first.metrics?.score || 0);
+
+        weightSpeedPerMonth = (weightDelta / days) * 30;
+        bfSpeedPerMonth = (bfDelta / days) * 30;
+        scoreSpeedPerMonth = (scoreDelta / days) * 30;
+
+        // Cap to safe standard ranges to prevent extreme regressions
+        weightSpeedPerMonth = Math.max(-5, Math.min(3, weightSpeedPerMonth));
+        bfSpeedPerMonth = Math.max(-4, Math.min(2, bfSpeedPerMonth));
+        scoreSpeedPerMonth = Math.max(-1, Math.min(8, scoreSpeedPerMonth));
+      }
+    }
+
+    // Default rate generators if rate is zero (e.g. initial or single assessment)
+    if (weightSpeedPerMonth === 0 && bfSpeedPerMonth === 0) {
+      if (goal === "emagrecer") {
+        weightSpeedPerMonth = -2.5; // lose ~2.5kg per month
+        bfSpeedPerMonth = -1.5;     // lose 1.5% fat per month
+        scoreSpeedPerMonth = 4;
+      } else if (goal === "ganhar_massa") {
+        weightSpeedPerMonth = 1.0;  // gain 1kg muscle mass per month
+        bfSpeedPerMonth = -0.2;     // slim down fat ratio slowly
+        scoreSpeedPerMonth = 3;
+      } else if (goal === "definicao") {
+        weightSpeedPerMonth = -1.2; // slight drop
+        bfSpeedPerMonth = -1.8;     // rapid separation
+        scoreSpeedPerMonth = 5;
+      } else { // saude
+        weightSpeedPerMonth = 0;    // hold weight stable mostly
+        bfSpeedPerMonth = -0.5;
+        scoreSpeedPerMonth = 3;
+      }
+    }
+
+    let predictionResult: any = null;
+    let fallbackUsed = false;
+
+    if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY") {
+      try {
+        const aiClient = new GoogleGenAI({
+          apiKey: process.env.GEMINI_API_KEY,
+          httpOptions: {
+            headers: {
+              "User-Agent": "aistudio-build",
+            }
+          }
+        });
+
+        const queryPrompt = `Atue como kinesiologista sénior e consultor esportivo de Inteligência Artificial para o software "BodyTrack AI".
+Gere uma previsão de progresso de alta precisão para o Atleta ${name} para o futuro de 1, 3 e 6 meses.
+
+Dados Iniciais e Históricos do Atleta:
+- Nome: ${name}
+- Idade: ${age} anos
+- Altura: ${height} cm
+- Peso Atual: ${currentWeight} kg
+- Objetivo do Perfil: ${goal} (emagrecer, ganhar_massa, definicao, saude)
+- Composição Atual: % Gordura Corporal: ${currentBF}%, Score de Shape: ${currentScore}/100, Nivelamento Postural: ${currentPosture}, Simetria Geral: ${currentSymmetry}
+- Trajetória Mensal Calculada no App: Taxa de peso: ${weightSpeedPerMonth.toFixed(1)}kg/mês, Taxa de BF: ${bfSpeedPerMonth.toFixed(1)}%/mês, Taxa de Score: +${scoreSpeedPerMonth.toFixed(1)} pontos/mês.
+
+Sua tarefa é projetar cientificamente as métricas realistas (Peso, Gordura Corporal %, Score de Shape, Postura e Simetria) para os períodos de 1 mês, 3 meses e 6 meses, além de construir um relato em texto extremamente motivador, focado em biomecânica e metas de marcos físicos (Milestones) em português.
+
+Mantenha as projeções fisiologicamente seguras e possíveis (ex: não perder mais de 4,5kg de gordura pura por mês, ganho de massa no máximo de 1.5kg por mês).
+
+Retorne OBRIGATORIAMENTE um JSON correspondente exatamente a este formato:
+{
+  "1_month": {
+    "period": "1_month",
+    "label": "1 Mês",
+    "weight": número,
+    "bodyFat": número,
+    "muscleMass": "baixa" | "moderada" | "alta",
+    "score": número,
+    "postureRating": "excelente" | "boa" | "desvios_leves" | "necessita_atencao",
+    "milestoneTitle": "Título curto do marco físico",
+    "description": "Texto descritivo das mudanças estéticas visíveis, em português",
+    "recommendations": ["4 sugestões de treino de no máximo 10 palavras cada"]
+  },
+  "3_months": {
+    "period": "3_months",
+    "label": "3 Meses",
+    "weight": número,
+    "bodyFat": número,
+    "muscleMass": "baixa" | "moderada" | "alta",
+    "score": número,
+    "postureRating": "excelente" | "boa" | "desvios_leves" | "necessita_atencao",
+    "milestoneTitle": "Título curto do marco físico",
+    "description": "Texto descritivo das mudanças em português",
+    "recommendations": ["4 sugestões de treino de no máximo 10 palavras cada"]
+  },
+  "6_months": {
+    "period": "6_months",
+    "label": "6 Meses",
+    "weight": número,
+    "bodyFat": número,
+    "muscleMass": "baixa" | "moderada" | "alta",
+    "score": número,
+    "postureRating": "excelente" | "boa" | "desvios_leves" | "necessita_atencao",
+    "milestoneTitle": "Título curto do marco físico",
+    "description": "Texto descritivo em português de consolidação",
+    "recommendations": ["4 sugestões de treino de no máximo 10 palavras cada"]
+  }
+}
+
+Não inclua formatações de markdown adicionais como \`\`\`json ou outro texto explicativo fora do JSON.`;
+
+        const response = await aiClient.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents: queryPrompt,
+          config: {
+            responseMimeType: "application/json"
+          }
+        });
+
+        if (response.text) {
+          predictionResult = JSON.parse(response.text.trim());
+          console.log("Successfully generated AI Progress Prediction!");
+        }
+      } catch (err) {
+        console.error("Failed querying Gemini for prediction, using robust physics block:", err);
+        fallbackUsed = true;
+      }
+    } else {
+      console.log("No Gemini API key available for prediction. Running physiological programmatic simulator.");
+      fallbackUsed = true;
+    }
+
+    if (fallbackUsed || !predictionResult) {
+      // Programmatic mathematical generator based on Goal & Trajectory
+      const applyMilestones = (months: number) => {
+        let factor = months;
+        // decelerating progress returns for weight and BF to simulate metabolic adaptation over 6 months
+        if (months === 3) factor = 2.4; 
+        if (months === 6) factor = 4.2;
+
+        let predictedWeight = currentWeight + (weightSpeedPerMonth * factor);
+        let predictedBF = currentBF + (bfSpeedPerMonth * factor);
+        let predictedScore = currentScore + (scoreSpeedPerMonth * factor);
+
+        // Physiological boundaries
+        const heightM = height / 100;
+        const minBMIWeight = 18.6 * (heightM * heightM); // floor weight safely
+        const maxSafeWeight = 130;
+        predictedWeight = Math.max(minBMIWeight, Math.min(maxSafeWeight, predictedWeight));
+
+        const minBF = gender === "M" ? 5.5 : 12.5;
+        predictedBF = Math.max(minBF, Math.min(48, predictedBF));
+        predictedScore = Math.min(99, Math.max(45, Math.round(predictedScore)));
+
+        // Muscle Mass determination
+        let muscleVal: "baixa" | "moderada" | "alta" = "moderada";
+        if (goal === "ganhar_massa" && months >= 3) muscleVal = "alta";
+        else if (goal === "definicao" && months >= 3) muscleVal = "alta";
+        else if (currentScore > 84) muscleVal = "alta";
+
+        // Posture correction progression over time
+        let nextPosture: "excelente" | "boa" | "desvios_leves" | "necessita_atencao" = "desvios_leves";
+        const postureStages: Array<"necessita_atencao" | "desvios_leves" | "boa" | "excelente"> = ["necessita_atencao", "desvios_leves", "boa", "excelente"];
+        let startIndex = postureStages.indexOf(currentPosture as any);
+        if (startIndex === -1) startIndex = 1;
+        
+        let newIndex = startIndex + (months === 1 ? 1 : months === 3 ? 2 : 3);
+        if (newIndex > 3) newIndex = 3;
+        nextPosture = postureStages[newIndex];
+
+        // Content generation based on goal
+        let milestoneTitle = "";
+        let description = "";
+        let recommendations: string[] = [];
+
+        if (goal === "emagrecer") {
+          if (months === 1) {
+            milestoneTitle = "Otimização Lipídica e Adaptação";
+            description = `Seu metabolismo responderá de maneira formidável nas primeiras 4 semanas de consistência. Espera-se uma redução visível no diâmetro da linha de cintura de aproximadamente -2 a -4cm. Seus ombros e pescoço começarão a demonstrar tônus refinado.`;
+            recommendations = [
+              "Higiene calórica estrita: déficit diário de 400 kcal.",
+              "Cardio aeróbico de 35 minutos após o treino.",
+              "Consumir 3.8 Litros de água pura todos os dias.",
+              "Executar agachamentos para maximizar o gasto calórico."
+            ];
+          } else if (months === 3) {
+            milestoneTitle = "Recomposição Corporal Nítida";
+            description = `Com 90 dias de consistência e treinos correlacionados, você terá redefinido seu teto termomuscular. Visualmente, a gordura subcutânea abdominal será reduzida significativamente, deixando visível a linha de cintura.`;
+            recommendations = [
+              "Fazer HIIT de alta intensidade 3x por semana.",
+              "Treinar musculação pesada focado em progressão de carga.",
+              "Fortalecer a musculatura escapular com remadas guiadas.",
+              "Reduzir carboidratos em dias de descanso muscular."
+            ];
+          } else {
+            milestoneTitle = "Consolidação e Novo Estilo Estético";
+            description = `Ao final de 6 meses, o seu progresso será absoluto. Você atingirá um percentual de gordura incrivelmente baixo e sustentável para o seu biotipo, com excelente tônus muscular global e postura atlética alinhada.`;
+            recommendations = [
+              "Fase de estabilização calórica pós-perda segura.",
+              "Utilizar agachamentos profundos para consolidar as coxas.",
+              "Fazer rotina de mobilidade para quadris e joelhos.",
+              "Refazer plano postural a cada 4 semanas de manutenção."
+            ];
+          }
+        } else if (goal === "ganhar_massa") {
+          if (months === 1) {
+            milestoneTitle = "Hipertrofia Sarcoplasmática";
+            description = `Surgimento de maior turgidez celular, seus músculos reterão mais glicogênio nas fibras, provocando um aspecto imediato de maior preenchimento e pump tônico. Ombros e caixa torácica começam a ganhar expansão inicial.`;
+            recommendations = [
+              "Superávit energético de 300 kcal limpas por dia.",
+              "Priorizar a descida lenta excêntrica em todos exercícios.",
+              "Suplementar Creatina diariamente para otimização tônica.",
+              "Fazer alongamento peitoral profundo pós-treino de costas."
+            ];
+          } else if (months === 3) {
+            milestoneTitle = "Massa Miofibrilar Consolidada";
+            description = `Ganho representará síntese proteica real e densidade fibrilar consolidada. A expansão de suas dorsais e deltóides acentuará o formato em "V" (V-Taper) em fotos de costas.`;
+            recommendations = [
+              "Musculação pesada de força nos exercícios multi-articulares.",
+              "Aumentar descanso entre séries longas para 2 minutos.",
+              "Suporte proteico integral a cada 3 horas ativas.",
+              "Adicionar gorduras boas para suporte hormonal anabólico."
+            ];
+          } else {
+            milestoneTitle = "Maturação Física e Densidade Plena";
+            description = `Consolidação de um perfil atlético imponente. O volume muscular acumulado em braços e pernas terá uma transição limpa e incrivelmente harmônica, mitigando assimetrias preexistentes graças aos eixos de carga simétricos.`;
+            recommendations = [
+              "Periodizar o macrociclo combinando força e resistência.",
+              "Remover fadiga por meio de treinos regenerativos periódicos.",
+              "Priorizar treino unilateral para compensação de gaps.",
+              "Fazer avaliação biométrica a cada 30 dias para ajuste."
+            ];
+          }
+        } else if (goal === "definicao") {
+          if (months === 1) {
+            milestoneTitle = "Exclusão Escapular e Perda de Água";
+            description = `Eliminação expressiva do líquido subcutâneo intersticial (retenção superficial). Os cortes superficiais do abdômen superior começam a despontar sob as poses fotográficas de frente e perfil.`;
+            recommendations = [
+              "Déficit calórico equilibrado com alta taxa proteica.",
+              "Cardio HIIT de 25 minutos pós-musculação pesada.",
+              "Praticar manobras diárias de Stomach Vacuum em jejum.",
+              "Focar em hidratação extrema de 4L ao dia."
+            ];
+          } else if (months === 3) {
+            milestoneTitle = "Hiper-redução Estética Superior";
+            description = `Rápida vascularização e cortes anatômicos profundos e rígidos em braços, panturrilhas, ombros e flancos abdominais. Destaque nítido para definição do feixe do tríceps.`;
+            recommendations = [
+              "Praticar poses isométricas pós-treino para densificar feixes.",
+              "Utilizar termogênicos para acelerar queima adiposa persistente.",
+              "Executar elevações laterais com controle estrito escapular.",
+              "Manter jejum intermitente sutil em dias estritamente vagos."
+            ];
+          } else {
+            milestoneTitle = "Fisicalidade Seca e Tridimensional';";
+            description = `Surgimento de listras de definição profunda, pele fina colada ao plano muscular. O equilíbrio postural estará perfeitamente restaurado, destacando a simetria central de braços, caixa e abdômen.`;
+            recommendations = [
+              "Ciclagem de carboidratos com base na intensidade de treino.",
+              "Refinar assimetrias por meio de trabalho corretivo focado.",
+              "Garantir 8h de repouso absoluto visando liberação de GH.",
+              "Redirecionar déficits em dias sem treino de hipertrofia."
+            ];
+          }
+        } else { // saude / postura
+          if (months === 1) {
+            milestoneTitle = "Reestruturação e Consciência Postural";
+            description = `Recrutamento do core tônico postural. Musculatura eretora da espinha começa a realinhar o plano sagital. Note uma redução drástica nas dores lombares e rigidez muscular nas costas e ombros.`;
+            recommendations = [
+              "Efetuar 15 minutos de mobilidade vertebral diariamente.",
+              "Fazer pranchas focadas em retroversão pélvica profunda.",
+              "Treinar manguito rotador e trapézio inferior 3x semana.",
+              "Injetar colágeno e magnésio para suporte ligamentar."
+            ];
+          } else if (months === 3) {
+            milestoneTitle = "Eixo Anatômico Estabilizado";
+            description = `Seu centro de gravidade retornará à perfeita simetria medial anterior. Os ombros caídos estarão agora estabilizados no plano lateral, dividindo as forças escapulares igualmente.`;
+            recommendations = [
+              "Acrescentar Farmer's Walk para estabilizar trapézios e mãos.",
+              "Restaurar arco plantar com agachamentos descalço no solo.",
+              "Executar Goblet Squats mantendo a espinha neutra.",
+              "Realizar pausas ativas a cada hora de repouso."
+            ];
+          } else {
+            milestoneTitle = "Simetria Funcional de Alta Vitalidade";
+            description = `Desvio postural mitigado por completo em todas as cadeias do corpo. A bacia, a cintura lombopélvica e as clavículas trabalharão harmonicamente. Tônus muscular polido em alto nível.`;
+            recommendations = [
+              "Consolidar a elasticidade por meio de Pilates avançado.",
+              "Fortalecer tendões e fáscias sob alongamento sobrecarregado.",
+              "Usar bola de liberação de lacrosse nos pés/ombros.",
+              "Efetuar rastreamento de alinhamento visual de forma mensal."
+            ];
+          }
+        }
+
+        return {
+          period: months === 1 ? "1_month" : months === 3 ? "3_months" : "6_months",
+          label: months === 1 ? "1 Mês" : months === 3 ? "3 Meses" : "6 Meses",
+          weight: Number(predictedWeight.toFixed(1)),
+          bodyFat: Number(predictedBF.toFixed(1)),
+          muscleMass: muscleVal,
+          score: predictedScore,
+          postureRating: nextPosture,
+          milestoneTitle,
+          description,
+          recommendations
+        };
+      };
+
+      predictionResult = {
+        "1_month": applyMilestones(1),
+        "3_months": applyMilestones(3),
+        "6_months": applyMilestones(6)
+      };
+    }
+
+    res.json({
+      success: true,
+      profile: { name, age, height, weight, gender, goal },
+      predictions: predictionResult,
+      fallbackUsed
+    });
+  });
+
   // Serve static files in production
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

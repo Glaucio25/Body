@@ -57,3 +57,23 @@ export interface PhysicalAssessment {
     back?: LandmarkCoordinate[];
   };
 }
+
+export interface ProgressPrediction {
+  period: '1_month' | '3_months' | '6_months';
+  label: string;
+  weight: number;
+  bodyFat: number;
+  muscleMass: 'baixa' | 'moderada' | 'alta';
+  score: number;
+  postureRating: 'excelente' | 'boa' | 'desvios_leves' | 'necessita_atencao';
+  milestoneTitle: string;
+  description: string;
+  recommendations: string[];
+}
+
+export interface PredictionSet {
+  "1_month": ProgressPrediction;
+  "3_months": ProgressPrediction;
+  "6_months": ProgressPrediction;
+}
+
